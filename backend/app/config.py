@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
 
@@ -11,11 +11,16 @@ class Settings(BaseSettings):
     interview_duration_seconds: int = 1800  # 30 minutes
     code_review_line_threshold: int = 5
     backend_port: int = 8000
-    cors_origins: List[str] = ["http://localhost:3000"]
+    cors_origins: str = "http://localhost:3000"
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+    )
+
+    def get_cors_origins(self) -> List[str]:
+        """Parse CORS origins from comma-separated string."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
 settings = Settings()

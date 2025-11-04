@@ -28,22 +28,22 @@ export function useInterview(options: UseInterviewOptions) {
     if (!isInterviewActive) return;
 
     const interval = setInterval(() => {
-      setElapsedTime((prev) => {
-        const newElapsed = prev + 1;
-        const newRemaining = Math.max(0, duration - newElapsed);
-        setRemainingTime(newRemaining);
-
-        if (newRemaining === 0) {
-          onTimeExpired?.();
-          setIsInterviewActive(false);
-        }
-
-        return newElapsed;
-      });
+      setElapsedTime((prev) => prev + 1);
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isInterviewActive, duration, onTimeExpired]);
+  }, [isInterviewActive]);
+
+  // Update remaining time based on elapsed time
+  useEffect(() => {
+    const newRemaining = Math.max(0, duration - elapsedTime);
+    setRemainingTime(newRemaining);
+
+    if (newRemaining === 0 && isInterviewActive) {
+      onTimeExpired?.();
+      setIsInterviewActive(false);
+    }
+  }, [elapsedTime, duration, isInterviewActive, onTimeExpired]);
 
   const updateCode = useCallback((newCode: string) => {
     setCode(newCode);

@@ -9,7 +9,7 @@ import PhaseIndicator from "@/components/PhaseIndicator";
 import { useRealtimeVoice } from "@/hooks/useRealtimeVoice";
 import { useCodeSync } from "@/hooks/useCodeSync";
 import { useInterview } from "@/hooks/useInterview";
-import { Session, InterviewPhase } from "@/lib/types";
+import { Session, InterviewPhase, CodeReview } from "@/lib/types";
 
 const INTERVIEW_DURATION = 1800; // 30 minutes in seconds
 
@@ -30,61 +30,95 @@ export default function InterviewPage() {
     }
   }, [router]);
 
+  // Stable reference for time expiry handler
+  const handleTimeExpired = useCallback(() => {
+    alert("Time's up! The interview has ended.");
+  }, []);
+
   // Interview state management
   const interview = useInterview({
     duration: INTERVIEW_DURATION,
-    onTimeExpired: () => {
-      alert("Time's up! The interview has ended.");
-      handleEndInterview();
-    },
+    onTimeExpired: handleTimeExpired,
   });
+
+  // When interview becomes inactive, redirect to results
+  useEffect(() => {
+    if (!interview.isInterviewActive && session && interview.elapsedTime > 0) {
+      // Small delay to allow user to see the alert
+      setTimeout(() => {
+        router.push(`/results?session_id=${session.session_id}`);
+      }, 1000);
+    }
+  }, [interview.isInterviewActive, session, interview.elapsedTime, router]);
 
   // Realtime voice connection
   const voice = useRealtimeVoice(session?.ephemeral_key || null);
 
+  // Stable callbacks for code sync
+  const handleReviewTriggered = useCallback((review: CodeReview) => {
+    console.log("Code review triggered:", review);
+    interview.addReview(review);
+  }, [interview.addReview]);
+
+  const handleFinalReview = useCallback((review: CodeReview) => {
+    console.log("Final review received:", review);
+    interview.addReview(review);
+    setShowCompleteButton(false);
+  }, [interview.addReview]);
+
+  const handlePhaseUpdate = useCallback((phase: string) => {
+    console.log("Phase updated:", phase);
+    interview.updatePhase(phase as InterviewPhase);
+  }, [interview.updatePhase]);
+
+  const handleTimeUpdate = useCallback((remainingTime: number) => {
+    console.log("Time update from backend:", remainingTime);
+  }, []);
+
   // Code sync with backend
   const codeSync = useCodeSync({
     sessionId: session?.session_id || "",
-    onReviewTriggered: (review) => {
-      console.log("Code review triggered:", review);
-      interview.addReview(review);
-    },
-    onFinalReview: (review) => {
-      console.log("Final review received:", review);
-      interview.addReview(review);
-      setShowCompleteButton(false);
-    },
-    onPhaseUpdate: (phase) => {
-      console.log("Phase updated:", phase);
-      interview.updatePhase(phase as InterviewPhase);
-    },
-    onTimeUpdate: (remainingTime) => {
-      // Could sync with backend time if needed
-      console.log("Time update from backend:", remainingTime);
-    },
+    onReviewTriggered: handleReviewTriggered,
+    onFinalReview: handleFinalReview,
+    onPhaseUpdate: handlePhaseUpdate,
+    onTimeUpdate: handleTimeUpdate,
   });
+
+  // Debounce timer for code sync
+  const debounceTimerRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Handle code changes
   const handleCodeChange = useCallback(
     (value: string | undefined) => {
       const code = value || "";
+
+      // Update local state immediately for smooth typing
       interview.updateCode(code);
 
-      // Send code update to backend
-      const lineCount = code.split("\n").length;
-      codeSync.sendCodeUpdate(code, lineCount);
+      // Debounce backend sync to avoid too many messages while typing
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+
+      debounceTimerRef.current = setTimeout(() => {
+        // Send code update to backend after user stops typing for 1 second
+        const lineCount = code.split("\n").length;
+        codeSync.sendCodeUpdate(code, lineCount);
+      }, 1000); // 1 second debounce
     },
-    [interview, codeSync]
+    [interview.updateCode, codeSync.sendCodeUpdate]
   );
 
   // Handle "I'm Done" button
-  const handleCodeComplete = () => {
+  const handleCodeComplete = useCallback(() => {
+    console.log("Submitting code for final review...");
     codeSync.sendCodeComplete();
     setShowCompleteButton(false);
-  };
+  }, [codeSync.sendCodeComplete]);
 
   // Handle end interview
-  const handleEndInterview = () => {
+  const handleEndInterview = useCallback(() => {
+    console.log("Ending interview...");
     interview.endInterview();
     voice.disconnect();
     codeSync.sendPhaseTransition("complete");
@@ -93,7 +127,7 @@ export default function InterviewPage() {
     if (session) {
       router.push(`/results?session_id=${session.session_id}`);
     }
-  };
+  }, [interview.endInterview, voice.disconnect, codeSync.sendPhaseTransition, session, router]);
 
   if (!session) {
     return (

@@ -30,8 +30,17 @@ export class RealtimeClient {
         audio: true,
       });
 
+      console.log("🎤 Microphone access granted");
+      console.log("Audio tracks:", mediaStream.getAudioTracks().map(t => ({
+        label: t.label,
+        enabled: t.enabled,
+        muted: t.muted,
+        readyState: t.readyState
+      })));
+
       // Add microphone track to peer connection
       mediaStream.getTracks().forEach((track) => {
+        console.log("Adding audio track to peer connection:", track.label);
         this.peerConnection?.addTrack(track, mediaStream);
       });
 
@@ -39,23 +48,110 @@ export class RealtimeClient {
       this.audioElement = document.createElement("audio");
       this.audioElement.autoplay = true;
 
+      // Set attributes to prevent interruption (especially on mobile)
+      this.audioElement.setAttribute("playsinline", "true");
+      this.audioElement.setAttribute("webkit-playsinline", "true");
+
+      // CRITICAL: Add audio element to DOM so it can play
+      // Hide it visually but keep it in the DOM
+      this.audioElement.style.display = "none";
+      document.body.appendChild(this.audioElement);
+
+      console.log("📻 Audio element created and added to DOM");
+
       // Handle incoming audio from OpenAI
       this.peerConnection.ontrack = (event) => {
+        console.log("🎵 Received audio track from OpenAI");
         if (this.audioElement) {
-          this.audioElement.srcObject = event.streams[0];
+          const stream = event.streams[0];
+          console.log("Stream info:", {
+            id: stream.id,
+            active: stream.active,
+            tracks: stream.getTracks().length
+          });
+
+          this.audioElement.srcObject = stream;
+
+          // Force play and handle errors gracefully
+          this.audioElement.play().then(() => {
+            console.log("✅ Audio playback started successfully");
+          }).catch((e) => {
+            console.error("❌ Failed to play audio:", e);
+            // Try again after user interaction
+            document.addEventListener("click", () => {
+              this.audioElement?.play().catch(console.error);
+            }, { once: true });
+          });
         }
       };
+
+      // Monitor audio element state
+      this.audioElement.onplay = () => console.log("▶️ Audio element playing");
+      this.audioElement.onpause = () => {
+        console.warn("⏸️ Audio element paused - attempting to resume");
+        // Try to resume if it gets paused unexpectedly
+        this.audioElement?.play().catch(console.error);
+      };
+      this.audioElement.onended = () => console.log("⏹️ Audio element ended");
+      this.audioElement.onerror = (e) => console.error("❌ Audio element error:", e);
+
+      // Prevent page visibility changes from stopping audio
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && this.audioElement) {
+          console.log("👁️ Page visible again, ensuring audio plays");
+          this.audioElement.play().catch(console.error);
+        }
+      });
+
+      // Ensure audio continues after clicks (helps with autoplay policies)
+      // NOTE: Only using click, NOT keyboard, to avoid interfering with typing in editor
+      const ensureAudioPlaying = () => {
+        if (this.audioElement && this.audioElement.srcObject) {
+          this.audioElement.play().catch(console.error);
+        }
+      };
+
+      // Only add click listener on initial user interaction to unlock autoplay
+      let clickHandlerAdded = false;
+      const oneTimeClick = () => {
+        if (!clickHandlerAdded) {
+          ensureAudioPlaying();
+          clickHandlerAdded = true;
+        }
+      };
+      document.addEventListener("click", oneTimeClick, { once: true });
+
+      console.log("✅ Realtime client setup complete");
 
       // Handle connection state changes
       this.peerConnection.onconnectionstatechange = () => {
         const state = this.peerConnection?.connectionState;
-        console.log("WebRTC connection state:", state);
+        console.log("🔌 WebRTC connection state:", state);
 
         if (state === "connected") {
           this.onConnect?.();
         } else if (state === "disconnected" || state === "failed") {
+          console.error("❌ Connection lost:", state);
           this.onDisconnect?.();
+        } else if (state === "connecting") {
+          console.log("⏳ Connecting...");
         }
+      };
+
+      // Monitor ICE connection state
+      this.peerConnection.oniceconnectionstatechange = () => {
+        const iceState = this.peerConnection?.iceConnectionState;
+        console.log("🧊 ICE connection state:", iceState);
+
+        if (iceState === "failed" || iceState === "disconnected") {
+          console.error("❌ ICE connection issue:", iceState);
+        }
+      };
+
+      // Monitor signaling state
+      this.peerConnection.onsignalingstatechange = () => {
+        const signalingState = this.peerConnection?.signalingState;
+        console.log("📡 Signaling state:", signalingState);
       };
 
       // Create offer
@@ -96,13 +192,20 @@ export class RealtimeClient {
   }
 
   disconnect(): void {
+    console.log("🔌 Disconnecting Realtime client");
+
     if (this.peerConnection) {
       this.peerConnection.close();
       this.peerConnection = null;
     }
 
     if (this.audioElement) {
+      this.audioElement.pause();
       this.audioElement.srcObject = null;
+      // Remove from DOM
+      if (this.audioElement.parentNode) {
+        this.audioElement.parentNode.removeChild(this.audioElement);
+      }
       this.audioElement = null;
     }
 

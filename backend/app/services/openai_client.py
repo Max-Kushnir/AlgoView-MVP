@@ -71,24 +71,26 @@ class OpenAIClient:
                 "audio": {
                     "output": {"voice": "alloy"}  # Warm, professional voice
                 },
-                "turn_detection": {
-                    "type": "server_vad",  # Server-side voice activity detection
-                },
-                "input_audio_transcription": {
-                    "model": "whisper-1"  # Transcribe user speech
-                },
             }
         }
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.base_url}/realtime/client_secrets",
-                json=session_config,
-                headers=self.headers,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+            try:
+                response = await client.post(
+                    f"{self.base_url}/realtime/client_secrets",
+                    json=session_config,
+                    headers=self.headers,
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                error_detail = e.response.text
+                print(f"OpenAI API error: {e.response.status_code} - {error_detail}")
+                raise Exception(f"OpenAI API error: {e.response.status_code} - {error_detail}")
+            except Exception as e:
+                print(f"Failed to create ephemeral key: {e}")
+                raise
 
     async def inject_context_to_session(
         self, session_id: str, content: str

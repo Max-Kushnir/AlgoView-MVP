@@ -21,43 +21,65 @@ export function useCodeSync(options: UsCodeSyncOptions) {
   const [error, setError] = useState<Error | null>(null);
   const clientRef = useRef<BackendWSClient | null>(null);
 
-  // Message handler
-  const messageHandler = useCallback<MessageHandler>(
-    (message: WSMessage) => {
-      console.log("WebSocket message:", message);
+  // Store callbacks in refs to avoid reconnection loops
+  const callbacksRef = useRef({
+    onReviewTriggered,
+    onFinalReview,
+    onPhaseUpdate,
+    onTimeUpdate,
+  });
 
-      switch (message.type) {
-        case "connected":
-          setIsConnected(true);
-          break;
+  // Update refs when callbacks change
+  useEffect(() => {
+    callbacksRef.current = {
+      onReviewTriggered,
+      onFinalReview,
+      onPhaseUpdate,
+      onTimeUpdate,
+    };
+  }, [onReviewTriggered, onFinalReview, onPhaseUpdate, onTimeUpdate]);
 
-        case "review_triggered":
-          onReviewTriggered?.(message.review);
-          break;
+  // Stable message handler that uses refs
+  const messageHandler = useCallback<MessageHandler>((message: WSMessage) => {
+    console.log("WebSocket message:", message);
 
-        case "final_review":
-          onFinalReview?.(message.review);
-          break;
+    switch (message.type) {
+      case "connected":
+        setIsConnected(true);
+        break;
 
-        case "phase_updated":
-          onPhaseUpdate?.(message.phase);
-          break;
+      case "review_triggered":
+        callbacksRef.current.onReviewTriggered?.(message.review);
+        break;
 
-        case "pong":
-          onTimeUpdate?.(message.remaining_time);
-          break;
+      case "final_review":
+        callbacksRef.current.onFinalReview?.(message.review);
+        break;
 
-        case "error":
-          console.error("WebSocket error:", message.message);
-          setError(new Error(message.message));
-          break;
-      }
-    },
-    [onReviewTriggered, onFinalReview, onPhaseUpdate, onTimeUpdate]
-  );
+      case "phase_updated":
+        callbacksRef.current.onPhaseUpdate?.(message.phase);
+        break;
+
+      case "pong":
+        callbacksRef.current.onTimeUpdate?.(message.remaining_time);
+        break;
+
+      case "error":
+        console.error("WebSocket error:", message.message);
+        setError(new Error(message.message));
+        break;
+    }
+  }, []); // No dependencies - uses refs instead
 
   // Connect to backend WebSocket
   useEffect(() => {
+    // Don't connect if sessionId is empty
+    if (!sessionId) {
+      console.log("No session ID, skipping WebSocket connection");
+      return;
+    }
+
+    console.log("Creating WebSocket connection for session:", sessionId);
     const client = new BackendWSClient(sessionId);
     clientRef.current = client;
 
@@ -66,18 +88,20 @@ export function useCodeSync(options: UsCodeSyncOptions) {
     client
       .connect()
       .then(() => {
-        console.log("Code sync WebSocket connected");
+        console.log("✅ Code sync WebSocket connected successfully");
+        setIsConnected(true);
       })
       .catch((err) => {
-        console.error("Failed to connect code sync WebSocket:", err);
+        console.error("❌ Failed to connect code sync WebSocket:", err);
         setError(err);
       });
 
     // Cleanup on unmount
     return () => {
+      console.log("Disconnecting WebSocket for session:", sessionId);
       client.disconnect();
     };
-  }, [sessionId, messageHandler]);
+  }, [sessionId, messageHandler]); // Only reconnect if sessionId changes
 
   // Send code update
   const sendCodeUpdate = useCallback((code: string, lineCount: number) => {

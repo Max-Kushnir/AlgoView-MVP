@@ -12,10 +12,17 @@ export function useRealtimeVoice(ephemeralKey: string | null) {
   const clientRef = useRef<RealtimeClient | null>(null);
 
   const connect = useCallback(async () => {
-    if (!ephemeralKey || isConnecting || isConnected) {
+    if (!ephemeralKey) {
+      console.log("No ephemeral key, cannot connect");
       return;
     }
 
+    if (isConnecting || isConnected) {
+      console.log("Already connecting or connected, skipping");
+      return;
+    }
+
+    console.log("Starting Realtime voice connection...");
     setIsConnecting(true);
     setError(null);
 
@@ -23,16 +30,16 @@ export function useRealtimeVoice(ephemeralKey: string | null) {
       const client = new RealtimeClient({
         ephemeralKey,
         onConnect: () => {
-          console.log("Realtime voice connected");
+          console.log("✅ Realtime voice CONNECTED - You should hear the AI now");
           setIsConnected(true);
           setIsConnecting(false);
         },
         onDisconnect: () => {
-          console.log("Realtime voice disconnected");
+          console.log("❌ Realtime voice DISCONNECTED");
           setIsConnected(false);
         },
         onError: (err) => {
-          console.error("Realtime voice error:", err);
+          console.error("❌ Realtime voice ERROR:", err);
           setError(err);
           setIsConnected(false);
           setIsConnecting(false);
@@ -41,8 +48,10 @@ export function useRealtimeVoice(ephemeralKey: string | null) {
 
       await client.connect();
       clientRef.current = client;
+      console.log("Realtime client created, waiting for connection state...");
     } catch (err) {
       const error = err instanceof Error ? err : new Error("Connection failed");
+      console.error("❌ Failed to create Realtime client:", error);
       setError(error);
       setIsConnected(false);
       setIsConnecting(false);

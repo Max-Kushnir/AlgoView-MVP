@@ -46,7 +46,8 @@ export class BackendWSClient {
 
         this.ws.onclose = () => {
           console.log("Backend WebSocket closed");
-          this.attemptReconnect(backendUrl);
+          // Don't auto-reconnect - let the React hook manage reconnection
+          // this.attemptReconnect(backendUrl);
         };
       } catch (error) {
         reject(error);
