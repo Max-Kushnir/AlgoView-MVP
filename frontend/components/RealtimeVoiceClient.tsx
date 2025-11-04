@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { memo } from "react";
 
 interface RealtimeVoiceClientProps {
   isConnected: boolean;
@@ -8,7 +8,7 @@ interface RealtimeVoiceClientProps {
   error: Error | null;
 }
 
-export default function RealtimeVoiceClient({
+const RealtimeVoiceClient = memo(function RealtimeVoiceClient({
   isConnected,
   isConnecting,
   error,
@@ -82,4 +82,6 @@ export default function RealtimeVoiceClient({
       </div>
     </div>
   );
-}
+});
+
+export default RealtimeVoiceClient;

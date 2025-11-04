@@ -68,9 +68,6 @@ class OpenAIClient:
                 "type": "realtime",
                 "model": settings.realtime_model,
                 "instructions": INTERVIEWER_SYSTEM_PROMPT,
-                "audio": {
-                    "output": {"voice": "alloy"}  # Warm, professional voice
-                },
             }
         }
 

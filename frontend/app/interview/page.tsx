@@ -87,6 +87,15 @@ export default function InterviewPage() {
   // Debounce timer for code sync
   const debounceTimerRef = React.useRef<NodeJS.Timeout | null>(null);
 
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
   // Handle code changes
   const handleCodeChange = useCallback(
     (value: string | undefined) => {

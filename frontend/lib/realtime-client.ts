@@ -8,6 +8,7 @@ import { RealtimeConfig } from "./types";
 export class RealtimeClient {
   private peerConnection: RTCPeerConnection | null = null;
   private audioElement: HTMLAudioElement | null = null;
+  private dataChannel: RTCDataChannel | null = null;
   private ephemeralKey: string;
   private onConnect?: () => void;
   private onDisconnect?: () => void;
@@ -24,6 +25,47 @@ export class RealtimeClient {
     try {
       // Create RTCPeerConnection
       this.peerConnection = new RTCPeerConnection();
+
+      // CRITICAL: Create data channel for sending/receiving events to OpenAI
+      // This is required for session configuration and back-and-forth conversation
+      this.dataChannel = this.peerConnection.createDataChannel("oai-events");
+      console.log("📡 Data channel created:", this.dataChannel.label);
+
+      // Handle data channel events
+      this.dataChannel.onopen = () => {
+        console.log("✅ Data channel OPEN - Sending session configuration...");
+        this.sendSessionUpdate();
+      };
+
+      this.dataChannel.onclose = () => {
+        console.warn("⚠️ Data channel CLOSED");
+      };
+
+      this.dataChannel.onerror = (error) => {
+        console.error("❌ Data channel ERROR:", error);
+      };
+
+      this.dataChannel.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          console.log("📩 Received from OpenAI:", message.type, message);
+
+          // Handle different event types from OpenAI
+          if (message.type === "error") {
+            console.error("❌ OpenAI error:", message.error);
+          } else if (message.type === "session.updated") {
+            console.log("✅ Session configuration updated successfully");
+          } else if (message.type === "response.done") {
+            console.log("🎤 AI finished speaking, waiting for user input");
+          } else if (message.type === "input_audio_buffer.speech_started") {
+            console.log("👂 AI detected user started speaking");
+          } else if (message.type === "input_audio_buffer.speech_stopped") {
+            console.log("🔇 AI detected user stopped speaking");
+          }
+        } catch (e) {
+          console.log("📩 Non-JSON message from OpenAI:", event.data);
+        }
+      };
 
       // Get user's microphone
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -62,14 +104,24 @@ export class RealtimeClient {
       // Handle incoming audio from OpenAI
       this.peerConnection.ontrack = (event) => {
         console.log("🎵 Received audio track from OpenAI");
-        if (this.audioElement) {
-          const stream = event.streams[0];
-          console.log("Stream info:", {
-            id: stream.id,
-            active: stream.active,
-            tracks: stream.getTracks().length
-          });
+        const stream = event.streams[0];
 
+        // Listen for stream/track ending
+        stream.getTracks().forEach(track => {
+          track.onended = () => {
+            const now = new Date().toISOString();
+            console.error(`🚫 [${now}] Media track ENDED - Connection closed by server`);
+            console.log("Track state:", track.readyState);
+          };
+        });
+
+        console.log("Stream info:", {
+          id: stream.id,
+          active: stream.active,
+          tracks: stream.getTracks().length
+        });
+
+        if (this.audioElement) {
           this.audioElement.srcObject = stream;
 
           // Force play and handle errors gracefully
@@ -86,14 +138,32 @@ export class RealtimeClient {
       };
 
       // Monitor audio element state
-      this.audioElement.onplay = () => console.log("▶️ Audio element playing");
+      this.audioElement.onplay = () => {
+        const now = new Date().toISOString();
+        console.log(`▶️ [${now}] Audio element playing`);
+      };
+
       this.audioElement.onpause = () => {
-        console.warn("⏸️ Audio element paused - attempting to resume");
+        const now = new Date().toISOString();
+        console.warn(`⏸️ [${now}] Audio element PAUSED - attempting to resume`);
+        console.trace("Pause stack trace");
         // Try to resume if it gets paused unexpectedly
         this.audioElement?.play().catch(console.error);
       };
-      this.audioElement.onended = () => console.log("⏹️ Audio element ended");
-      this.audioElement.onerror = (e) => console.error("❌ Audio element error:", e);
+
+      this.audioElement.onended = () => {
+        const now = new Date().toISOString();
+        console.warn(`⏹️ [${now}] Audio element ENDED - Stream finished`);
+        console.log("Audio readyState:", this.audioElement?.readyState);
+        console.log("Stream active:", (this.audioElement?.srcObject as MediaStream)?.active);
+      };
+
+      this.audioElement.onerror = (e) => {
+        const now = new Date().toISOString();
+        console.error(`❌ [${now}] Audio element ERROR:`, e);
+        console.log("Error details:", this.audioElement?.error);
+      };
+
 
       // Prevent page visibility changes from stopping audio
       document.addEventListener("visibilitychange", () => {
@@ -191,8 +261,55 @@ export class RealtimeClient {
     }
   }
 
+  /**
+   * Send session configuration to OpenAI Realtime API
+   * This configures turn detection for back-and-forth conversation
+   */
+  private sendSessionUpdate(): void {
+    if (!this.dataChannel || this.dataChannel.readyState !== "open") {
+      console.error("❌ Cannot send session update - data channel not open");
+      return;
+    }
+
+    const sessionConfig = {
+      type: "session.update",
+      session: {
+        // Enable turn detection for back-and-forth conversation
+        turn_detection: {
+          type: "server_vad", // Server-side voice activity detection
+          threshold: 0.3, // Lower threshold = less sensitive to pauses (0.0-1.0)
+          prefix_padding_ms: 300, // Include 300ms before speech starts
+          silence_duration_ms: 2500, // Wait 2.5 seconds of silence before ending turn (increased to prevent interruption)
+          create_response: true, // Automatically create AI response after user speaks
+        },
+        // Audio settings
+        input_audio_format: "pcm16",
+        output_audio_format: "pcm16",
+        input_audio_transcription: {
+          model: "whisper-1",
+        },
+        // Voice selection
+        voice: "echo", // Options: alloy, echo, shimmer
+        // Enable both text and audio modalities
+        modalities: ["text", "audio"],
+        // Temperature for response generation
+        temperature: 0.8,
+        // Max response tokens
+        max_response_output_tokens: 4096,
+      },
+    };
+
+    console.log("📤 Sending session.update:", sessionConfig);
+    this.dataChannel.send(JSON.stringify(sessionConfig));
+  }
+
   disconnect(): void {
     console.log("🔌 Disconnecting Realtime client");
+
+    if (this.dataChannel) {
+      this.dataChannel.close();
+      this.dataChannel = null;
+    }
 
     if (this.peerConnection) {
       this.peerConnection.close();
